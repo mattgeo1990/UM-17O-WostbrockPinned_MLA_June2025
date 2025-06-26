@@ -1,0 +1,785 @@
+# Note: this is temporarily saved as and R Markdown file. Switch to R Script format (bottom right of this window) to run.
+
+# ---
+#   title: "IPL 17O Data"
+# author: "IsoPaleoLab"
+# date: "`r (Sys.time())`"
+# output: html_document
+# ---
+#
+#   ```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = FALSE)
+
+# ```
+
+### Nu Data O2 Anlaysis
+#
+# This R Markdown document is the second of two scripts to analyze Nu data text files and calculate $\delta$^18^O, $\delta$^17^O, and $\Delta$^17^O.
+
+#### Setup
+# Clear plots
+if (!is.null(dev.list()))
+  dev.off()
+
+# ```{r,warning=FALSE,message=FALSE}
+#packages
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(ggpubr)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(stringr)
+
+# Update reactor names with each new reactor
+reactor.file.names <-
+  c("01",
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07",
+    "08",
+    "09",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14")
+
+###############################################################################################
+###############################################################################################
+###############################################################################################
+###############################################################################################
+
+for (reactor.file.number in 14) {
+  #1:length(reactor.file.names)) {
+  # Clear before each reactor reduction - to keep different reactors from interacting
+  rm(list = ls()[!ls() %in% c("reactor.file.names", "reactor.file.number")])
+  
+  ######### data file locations setup ###########################################
+  # importing path
+  path.in <-
+    "C:/Users/Tyler/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure/0000_LabFileFormatting/001_Reactor Spreadsheet Formatted/"
+  
+  # Output path
+  path.out <-
+    "C:/Users/Tyler/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure/0002_LabFileCorrectedOutput/"
+  
+  # define path to the accepted standard values spreadsheet
+  path.to.accept.std <-
+    "C:/Users/Tyler/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure/0001_ReductionCode/"
+  accepted.std.file = "acceptedStds.csv"
+  
+  # Define path to the functions needed for this program
+  path.to.functions <- "C:/Users/Tyler/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure/0001_ReductionCode/ReductionCodeFunctions/"
+  # Function sources
+  source(paste(path.to.functions, "correct.SMOW.SLAP.basic.R", sep = ""))
+  source(paste(path.to.functions, "correct.SMOW.SLAP.linearSMOW.R", sep = ""))
+  source(paste(path.to.functions, "multiplot.R", sep = ""))
+  source(paste(path.to.functions, "ggplot.maker.IPLD17O.R", sep = ""))
+  source(paste(path.to.functions, "ggplot.maker.IPLD17O.std.R", sep = ""))
+  source(paste(path.to.functions, "segment.finder.R", sep = ""))
+  
+  
+  # Parameters to automatically decide which correction scheme to use for the data. The program starts by assuming the basic SMOW-SLAP correction, then does a linear correction above a certain r-sqared value in SMOW data, then does a segmented correction (with basic and linear corrections decided within each section) if jumps between groups of SMOWs are observed above a certain threshold.
+  threshold.rsq = 0.00 # R-squared threshold to use a linear correction for data reduction
+  threshold.jump = 20 # D17O (per meg) threshold for the minimum jump between groups of SMOWs to trigger a segmented correction for data reduction
+  slap.IPL.threshold = 6 # For segmented correction, SLAP measurement must be withing this many IPL numbers of the SMOW cutoff (requires SMOWs and SLAPs analyses to be paired)
+  threshold.singlePrime <- 5 # The per mil difference between samples beyond which at least a single prime is required (or else data is flagged out)
+  threshold.doublePrime <- 10 # The per mil difference between samples beyond which at least two primes are required (or else data is flagged out)
+  
+  
+  ######### Start reduction ###########################################  
+  
+  #import data
+  setwd(path.in)
+  # Which data file to import?
+  data.file <-
+    paste("Reactor", reactor.file.names[reactor.file.number], "Final.csv", sep =
+            "")
+  compiled.nu.data_0 <-
+    read.csv(data.file, stringsAsFactors = FALSE, header = TRUE)
+  
+  # Import the accepted standard values
+  std.accepted <-
+    read.csv(
+      paste(path.to.accept.std, accepted.std.file, sep = ""),
+      stringsAsFactors = FALSE,
+      header = TRUE
+    )
+  
+  # Create the overall flag column, which combines flags from flag.analysis and from samples that were not primed correctly. These flagged analyses cannot be trusted (bad analysis, not correctly primed) and are removed from the dataset.
+  compiled.nu.data <- subset(compiled.nu.data_0, group.num > 0)
+  compiled.nu.data$test.d.18O.prelim <- compiled.nu.data$flag.analysis*0-9999 # some fill values for the test.d.18O.prelim column
+  compiled.nu.data$flag.analysis[is.na(compiled.nu.data$flag.analysis)] <- 0 # NA values mean no flag
+  compiled.nu.data$flag.d18O <- compiled.nu.data$flag.analysis*0+1 # default to reject (ones) for start
+  compiled.nu.data$primes[is.na(compiled.nu.data$primes)] <- 0 # NA values mean no prime
+  
+  for (dk in 1:nrow(compiled.nu.data)){
+    # calculate the test value
+    if (dk == 1){ # first row, nothing to test against
+      compiled.nu.data$test.d.18O.prelim[dk] = 6 # always require at least one prime for the first analysis
+    } else {
+      compiled.nu.data$test.d.18O.prelim[dk] = abs(compiled.nu.data$d.18O.prelim[dk]-compiled.nu.data$d.18O.prelim[dk-1])
+    }
+    if (compiled.nu.data$test.d.18O.prelim[dk] < threshold.singlePrime){ # no check required, sample jump is small
+      compiled.nu.data$flag.d18O[dk] <- 0 # accept the row
+    } else if (compiled.nu.data$test.d.18O.prelim[dk] > threshold.singlePrime & compiled.nu.data$test.d.18O.prelim[dk] < threshold.doublePrime) { #  check required, sample jump large enough to require a single prime
+      if (compiled.nu.data$primes[dk]>0){ # check passed
+        compiled.nu.data$flag.d18O[dk] <- 0 # accept the row
+      }
+    } else if (compiled.nu.data$test.d.18O.prelim[dk] > threshold.doublePrime){ #  check required, sample jump large enough to require a double prime
+      if (compiled.nu.data$primes[dk]>1){ # check passed
+        compiled.nu.data$flag.d18O[dk] <- 0 # accept the row
+      } else {
+        compiled.nu.data$flag.d18O[dk] <- 2
+      }
+    }
+  }
+  
+  # Now combine flag.analytical and flag.d18O
+  compiled.nu.data$flag <- compiled.nu.data$flag.d18O + compiled.nu.data$flag.analysis
+  test.flag <- compiled.nu.data$flag>0 # was it flagged?
+  compiled.nu.data$flag[test.flag] <- 1 # anything flagged gets a 1
+  
+  
+  #keep compiled.nu.data and D17O.data separate. this way you always keep a version of the original input data (no changes to compiled.nu.data)
+  D17O.data <- subset(compiled.nu.data, flag == 0 & group.num > 0)
+  
+  # Create segment.IPL (controls segmented runs) from the flag.major column.
+  segment.IPL <- matrix(-9999, nrow=1,ncol=2) # Default value for no segments
+  compiled.nu.data_0$flag.major[is.na(compiled.nu.data_0$flag.major)] <- 0 # NA values mean no flag
+  if (sum(compiled.nu.data_0$flag.major)>0) { # if there are any segments
+    # Find the IPL number after each break
+    flag.major.test2 <- which(compiled.nu.data_0$flag.major %in% 1) # find the breaks
+    segment.IPL.numList <- as.numeric(compiled.nu.data_0$IPL.num[flag.major.test2+1]) # start of each new segment
+    # add on beginning and end of the reactor
+    subset.compiled.nu.data_0 <- subset(compiled.nu.data_0, group.num>0)
+    segment.IPL.numList <- as.numeric(c(min(subset.compiled.nu.data_0$IPL.num), segment.IPL.numList, max(subset.compiled.nu.data_0$IPL.num)))
+    # For each break, set up the min/max IPL.nums
+    segment.IPL = matrix(NA,nrow=length(segment.IPL.numList)-1,ncol=2)
+    # Now fill the matrix
+    for (mm in 1:(length(segment.IPL.numList)-1)){
+      cur.starter <- segment.IPL.numList[mm]
+      if (mm < length(segment.IPL.numList)-1) { # not the end
+        cur.ender <- segment.IPL.numList[mm+1]-1
+      } else { # This is the last segment - end at the last IPL. number
+        cur.ender <- segment.IPL.numList[mm+1]
+      }
+      segment.IPL[mm,1:2] <- c(cur.starter, cur.ender)
+    }
+    # Revise the segment.IPL matrix. Numbers are either matched up to their corresponding IPL number in the flag-cleared data list or are rolled to the next highest number available.
+    for (mm in 1:nrow(segment.IPL)){
+      for (mmm in 1:ncol(segment.IPL)){
+        safe.count <- -999
+        match.IPL = which(as.numeric(D17O.data$IPL.num) == segment.IPL[mm, mmm])
+        if (length(match.IPL)<1) { # there is not a match
+          safe.count <- 0
+          # Find next nearest IPL.num above this one and replace in segment.IPL
+          while (length(match.IPL)<1) { # there is not a match
+            safe.count <- safe.count+1
+            if (mmm == 1){ # this is a start segment, count forwards
+              segment.IPL[mm,mmm] <- segment.IPL[mm,mmm]+1
+            } else if (mmm == 2) { # this is an end segment, count backwards
+              segment.IPL[mm,mmm] <- segment.IPL[mm,mmm]-1
+            }
+            match.IPL <- which(as.numeric(D17O.data$IPL.num) == segment.IPL[mm, mmm])
+            if (safe.count > 1000){ # If the segment is not real, break this look
+              break
+              print("error in making segment.IPL")
+            }
+          }
+        }
+        print(safe.count)
+      }
+    }
+  }
+  
+  
+  
+  
+  #define prefix (reactor.ID)
+  prefix <-
+    unique(D17O.data$reactor.ID)[!(unique(D17O.data$reactor.ID) == "")]
+  
+  #setup colors for plots
+  #possible standards (only waters)
+  standards <-
+    c(
+      "SMOW",
+      "SLAP",
+      "GISP",
+      "USGS45",
+      "USGS46",
+      "USGS47",
+      "USGS48",
+      "USGS49",
+      "USGS50",
+      "102-GC-AZ01",
+      "IAEA-C1",
+      "GON06-OES",
+      "NBS-18",
+      "NBS-19"
+    )
+  
+  #non-standard water samples
+  unknown.waters <-
+    unique(subset(D17O.data, Type.1 == "Water")$Type.2)
+  
+  plot.col.byCorr <-
+    c(
+      "black",
+      "darkcyan",
+      "lightblue",
+      "darkgreen",
+      "blueviolet",
+      "goldenrod",
+      "darkorange3",
+      "firebrick",
+      "orchid",
+      rep("grey40", length(unknown.waters))
+    )
+  plot.col.byCorr.names = c("basic",
+                            "linear",
+                            "seg.1",
+                            "seg.2",
+                            "seg.3",
+                            "seg.4",
+                            "seg.5",
+                            "seg.6",
+                            "seg.7")
+  names(plot.col.byCorr) = plot.col.byCorr.names
+  
+  plotting.colors.byStd <-
+    c(
+      "black",
+      "darkcyan",
+      "lightblue",
+      "darkgreen",
+      "blueviolet",
+      "goldenrod",
+      "darkorange3",
+      "firebrick",
+      "orchid",
+      "yellow",
+      "blue",
+      "green",
+      "red",
+      "purple",
+      rep("grey40", length(unknown.waters))
+    )
+  names(plotting.colors.byStd) = c(
+    "SMOW",
+    "SLAP",
+    "GISP",
+    "USGS45",
+    "USGS46",
+    "USGS47",
+    "USGS48",
+    "USGS49",
+    "USGS50",
+    "102-GC-AZ01",
+    "IAEA-C1",
+    "GON06-OES",
+    "NBS-18",
+    "NBS-19",
+    unknown.waters
+  )
+  
+  # ```
+  # Input data file = `r data.file`
+  # Reactor ID = `r prefix`
+  
+  ## BASIC - Do basic SMOW-SLAP reduction. This is Phoebe's code just in a function
+  D17O.data.basic.cor = correct.SMOW.SLAP.basic(D17O.data)
+  D17O.final = D17O.data.basic.cor # BASIC correction is always assumed first
+  D17O.final.line.stats = NA
+  basic.linear = -9999 # This is a default flag that identifies no segment correction
+  cat = 1
+  
+  ## LINEAR DRIFT - reduction for case where there is a linear drift in the standards. Regression is done on the SMOW analyses.
+  D17O.data.linearSMOW.cor.HOLD = correct.SMOW.SLAP.linearSMOW(D17O.data)
+  names(D17O.data.linearSMOW.cor.HOLD) <-
+    c("D17O.data.linearSMOW.cor",
+      "D17O.data.line.stats.linearSMOW")
+  list2env(D17O.data.linearSMOW.cor.HOLD, envir = .GlobalEnv)
+  if (D17O.data.line.stats.linearSMOW[3, 2] > threshold.rsq &
+      D17O.data.line.stats.linearSMOW[3, 2] > threshold.rsq) {
+    D17O.final = D17O.data.linearSMOW.cor # if threshold met, switch to the linear correction
+    D17O.final.line.stats = D17O.data.line.stats.linearSMOW
+    cat = 2
+  }
+  
+  ## SEGMENTS - reduction for case where there is a large jump in the SMOW values mid-reactor. Before and after the jump(s) are reduced separately.
+  # threshold.jump <- 20
+  # threshold value that defines a D17O jump between the averages of SMOW groups (per meg)
+  # basic.linear = 2
+  # Do you want to use basic or linear correction for the segments? 1=basic. 2=linear
+  # segment.IPL.HOLD <-
+  #   segment.finder(D17O.data.basic.cor, threshold.jump, slap.IPL.threshold)
+  # names(segment.IPL.HOLD) <-
+  #   c("segment.IPL",
+  #     "skip.segment.IPL")
+  # list2env(segment.IPL.HOLD, envir = .GlobalEnv)
+  # Now run the segment correction if there were identified jumps
+  if (segment.IPL[1, 1] != -9999) {
+    basic.linear = 1 # This overrides the default setting, identifies segment correction exists
+    # Now run the BASIC reduction for each segment. Note that this will produce overlapping SMOW (and potentially SLAP) sets as each reduction is simply concatenated.
+    for (k in 1:nrow(segment.IPL))
+    {
+      IPL.num.list.b = as.numeric(D17O.data$IPL.num) # note that this produces a warning message as R will convert all characters (e.g., "the reactor did XYZ") into N/A values. Doesn't seem to affect the indexing though.
+      # test <-
+      #   IPL.num.list.b >= segment.IPL[k, 1] &
+      #   IPL.num.list.b <= segment.IPL[k, 2]
+      # # test = D17O.data$IPL.num>=937 #& D17O.data$IPL.num<=1077
+      # D17O.data.segment <-
+      #   D17O.data[test, ] # only keep rows from the current segment
+      # Had to expand this formulation - some of the IPL.num are weirdly implemented
+      starter <- which(IPL.num.list.b == segment.IPL[k, 1])
+      ender <- which(IPL.num.list.b == segment.IPL[k, 2])
+      D17O.data.segment = D17O.data[starter:ender,]
+      D17O.data.segment <-
+        D17O.data.segment[!is.na(D17O.data.segment$IPL.num), ] # delete NA rows - they are not needed.
+      
+      # correct segments using BASIC correction
+      segment.cor.HOLD.basic <-
+        correct.SMOW.SLAP.basic(D17O.data.segment)
+      if (k == 1) {
+        # make the lists on the first run through
+        D17O.data.segment.cor.basic <-
+          vector(mode = "list", length = nrow(segment.IPL))
+      }
+      # Now fill the list with the corrected data
+      D17O.data.segment.cor.basic[[k]] <- segment.cor.HOLD.basic
+      
+      # Also correct segments using LINEAR correction
+      segment.cor.HOLD.linear <-
+        correct.SMOW.SLAP.linearSMOW(D17O.data.segment)
+      if (k == 1) {
+        # make the lists on the first run through (these contain all corrections done for the data set)
+        D17O.data.segment.cor.linear <-
+          vector(mode = "list", length = nrow(segment.IPL))
+        D17O.data.segment.cor.line.stats.linear <-
+          vector(mode = "list", length = nrow(segment.IPL))
+      }
+      # Now fill the list with the corrected data
+      D17O.data.segment.cor.linear[[k]] <-
+        segment.cor.HOLD.linear[["name1"]]
+      D17O.data.segment.cor.line.stats.linear[[k]] <-
+        segment.cor.HOLD.linear[["name2"]]
+      
+      # Now automatically decide whether to use BASIC or LINEAR correction for each segment
+      temp.rsq33 <-
+        D17O.data.segment.cor.line.stats.linear[[k]][3, 2]
+      temp.rsq34 <-
+        D17O.data.segment.cor.line.stats.linear[[k]][3, 3]
+      if (k == 1) {
+        # make the lists on the first run through
+        D17O.data.segment.cor.all <-
+          vector(mode = "list", length = nrow(segment.IPL))
+        D17O.data.segment.cor.line.stats.all <-
+          vector(mode = "list", length = nrow(segment.IPL))
+      }
+      
+      if (temp.rsq33 > threshold.rsq &
+          temp.rsq34 > threshold.rsq) {
+        # did meet LINEAR threshold
+        D17O.data.segment.cor.all[[k]] <-
+          segment.cor.HOLD.linear[["name1"]]
+        D17O.data.segment.cor.line.stats.all[[k]] <-
+          segment.cor.HOLD.linear[["name2"]]
+      } else {
+        # did not meet LINEAR threshold
+        D17O.data.segment.cor.all[[k]] <- segment.cor.HOLD.basic
+        D17O.data.segment.cor.line.stats.all[[k]] <- NA
+      }
+    }
+    D17O.final = D17O.data.segment.cor.all
+    D17O.final.line.stats = D17O.data.segment.cor.line.stats.all
+  }
+  
+  ############################################################################################
+  # Summary tables and plots to compare primary  standards - also by mode of correction
+  # Set up the empty list
+  if (basic.linear == -9999) {
+    # no segments identified
+    summary.SMOW <- data.frame(matrix(0, ncol = 3, nrow = 8))
+    colnames(summary.SMOW) = c(1:3)
+  } else if (basic.linear >= 1) {
+    # Segments were identified
+    summary.SMOW <-
+      data.frame(matrix(NA, ncol = 3 + nrow(segment.IPL), nrow = 8))
+    colnames(summary.SMOW) = c(1:(3 + nrow(segment.IPL)))
+  }
+  m = colnames(summary.SMOW) # Get all of the column names
+  summary.SMOW[, 1] <- c(
+    "type",
+    "d33 rsq",
+    "d34 rsq",
+    "seg. start" ,
+    "seg. end",
+    "SMOW SD (per mil)" ,
+    "SMOW n" ,
+    "SMOW range"
+  )
+  
+  # Fill the list with the summary information
+  for (k in 1:(ncol(summary.SMOW) - 1))
+  {
+    # Find the correct datasets
+    if (k == 1) {
+      curData.line.flag <- -9999 # assume there is no linear data
+      # BASIC correction
+      curData <- D17O.data.basic.cor
+      type = "basic"
+    } else if (k == 2) {
+      # LINEAR correction
+      curData <- D17O.data.linearSMOW.cor
+      curData.line <- D17O.data.line.stats.linearSMOW
+      curData.line.flag = 1
+      type = "linear"
+    } else if (k > 2) {
+      # SEGMENT correction(s)
+      curData <- D17O.data.segment.cor.all[[k - 2]]
+      curData.line <- D17O.data.segment.cor.line.stats.all[[k - 2]]
+      if (length(curData.line) == 1) {
+        # segments run via BASIC correction
+        type = paste("seg. ", k - 2, " - basic")
+        curData.line.flag = -9999
+      } else {
+        # segments run via LINEAR correction
+        curData.line.flag = 1
+        type = paste("seg. ", k - 2, " - linear")
+      }
+    }
+    # Now fill in the table
+    cur.smow <- subset(curData, Type.2 == "SMOW" & flag == 0)
+    if (curData.line.flag == 1) {
+      # there is linear data
+      # These are all written out so others can see where the numbers are coming from
+      d33r2 = round(curData.line[3, 2], 2)
+      d34r2 = round(curData.line[3, 3], 2)
+      segStart = min(as.numeric(curData$IPL.num))
+      segEnd = max(as.numeric(curData$IPL.num))
+      smow.SD = round(sd(as.numeric(cur.smow$D17O.per.meg)), 0)
+      smow.n = nrow(cur.smow)
+      smow.range = round(max(as.numeric(cur.smow$D17O.per.meg)) - min(as.numeric(cur.smow$D17O.per.meg)))
+    } else {
+      # there is NOT linear data
+      d33r2 = NA
+      d34r2 = NA
+      segStart = min(as.numeric(curData$IPL.num))
+      segEnd = max(as.numeric(curData$IPL.num))
+      smow.SD = round(sd(as.numeric(cur.smow$D17O.per.meg)), 0)
+      smow.n = nrow(cur.smow)
+      smow.range = round(max(as.numeric(cur.smow$D17O.per.meg)) - min(as.numeric(cur.smow$D17O.per.meg)))
+    }
+    # Make single set of data and put in the proper row
+    curColData = c(type,
+                   d33r2,
+                   d34r2,
+                   segStart,
+                   segEnd,
+                   smow.SD,
+                   smow.n,
+                   smow.range)
+    summary.SMOW[[m[k + 1]]] = curColData
+    
+    # Create dataframe of the different SMOW corrections for comparison
+    if (k == 1) {
+      # add data
+      corType = data.frame(matrix(
+        plot.col.byCorr.names[k],
+        ncol = 1,
+        nrow = length(cur.smow$Date.Time)
+      ))
+      smow.all <-
+        data.frame(cur.smow$Date.Time, cur.smow$D17O.per.meg, corType)
+      # change column names (can't be done at same time apparently...)
+      names(smow.all) = c("Date.Time", "D17O.per.meg", "CorType")
+      count <- 3 # keep track of number of columsn in list
+    } else {
+      # just add on to the plot
+      corType = data.frame(matrix(
+        plot.col.byCorr.names[k],
+        ncol = 1,
+        nrow = length(cur.smow$Date.Time)
+      ))
+      smow.all.add = data.frame(cur.smow$Date.Time, cur.smow$D17O.per.meg, corType)
+      names(smow.all.add) = c("Date.Time", "D17O.per.meg", "CorType")
+      smow.all = rbind(smow.all, smow.all.add)
+      count <- count + 3
+    }
+  }
+  
+  # Make the date format correct for ggplot (factor to date)
+  smow.all[, 1] <- ymd_hms(smow.all[, 1])
+  
+  
+  # Set up a list to contain all of the data for easier plotting
+  data.cor = vector(mode = "list", length = (ncol(summary.SMOW) - 1))
+  data.cor[[1]] = D17O.data.basic.cor
+  data.cor[[2]] = D17O.data.linearSMOW.cor
+  if (basic.linear == 1) {
+    # segmented correction exists
+    for (k in 3:(ncol(summary.SMOW) - 1))
+    {
+      data.cor[[k]] = D17O.data.segment.cor.all[[k - 2]]
+    }
+  }
+  # Set up a list to contain all of the line stats for reference
+  data.cor.line.stats = vector(mode = "list", length = (ncol(summary.SMOW) - 1))
+  data.cor.line.stats[[1]] = NA # There are no line stats for the basic correction
+  data.cor.line.stats[[2]] = D17O.data.line.stats.linearSMOW
+  if (basic.linear == 1) {
+    # segmented correction exists
+    for (k in 3:(ncol(summary.SMOW) - 1))
+    {
+      data.cor.line.stats[[k]] = D17O.data.segment.cor.line.stats.all[[k - 2]]
+    }
+  }
+  
+  ############################################################################################
+  # Now plot up the corrected SMOWs for comparison
+  # This plots up the different correction types next to each other
+  plot.list.smow = list()#  vector(mode = "list", length = (ncol(summary.SMOW)-1))
+  for (r in 1:length(data.cor))
+  {
+    curData = data.cor[[r]]
+    curSMOW = subset(curData, Type.2 == "SMOW" & flag == 0)
+    plot.list.smow[[r]] <- ggplot.maker.IPLD17O(curSMOW)
+  }
+  # multiplot(plotlist = plot.list.smow,cols=2)
+  r.end <- r + 1
+  
+  
+  # This plots up the different correction types on top of each other
+  plot.SMOW.allCor <-
+    ggplot() + geom_point(
+      data = smow.all,
+      aes(
+        x = smow.all$Date.Time,
+        y = smow.all$D17O.per.meg,
+        color = smow.all$CorType
+      ),
+      size = 3
+    ) + scale_color_manual(values = plot.col.byCorr)
+  # add labels
+  plot.SMOW.allCor = plot.SMOW.allCor + labs(x = "Date",
+                                             y = bquote( ~ Delta ^ 17 ~ "O (per meg)"),
+                                             title = "correction comparison")
+  plot.SMOW.allCor = plot.SMOW.allCor + scale_x_datetime(date_labels = "%b/%Y") # month/year for x axis
+  plot.list.smow[[r.end]] = plot.SMOW.allCor
+  # print(plot.SMOW.allCor) # have to print plot if ggplot was run in a for loop
+  multiplot(plotlist = plot.list.smow, cols = 2)
+  
+  ############################################################################################
+  
+  # Summary tables and plots to compare primary and secondary standards - also by mode of correction
+  # This plots up the different correction types next to each other
+  plot.list.std = list()#  vector(mode = "list", length = (ncol(summary.SMOW)-1))
+  all.std = list()
+  summary.std = list()
+  for (r in 1:length(data.cor))
+  {
+    for (rr in 1:length(standards))
+    {
+      curData = data.cor[[r]]
+      cur.std = subset(curData, Type.2 == standards[[rr]] &
+                         flag == 0)
+      # Find current standard's accepted value
+      cur.accepted <-
+        subset(std.accepted, standard == standards[rr])
+      # Calculate and add the current standard's residual to the dataframe
+      # if
+      cur.std$d18O.accept <-
+        cur.std$dp18O.final * 0 + cur.accepted$d18O.per.mil.accepted
+      cur.std$D17O.accept <-
+        cur.std$D17O.per.meg * 0 + cur.accepted$D17O.per.meg.accepted
+      cur.std$residual <-
+        cur.std$D17O.per.meg - cur.accepted$D17O.per.meg.accepted
+      # calculate average info for the summary-standards list
+      avg = round(mean(cur.std$D17O.per.meg), 0)
+      avg.resid = round(avg - cur.accepted$D17O.per.meg.accepted, 0)
+      n = nrow(cur.std) # number of replicates
+      SD = round(sd(cur.std$D17O.per.meg), 0) # standard deviation of replicates
+      if (rr == 1) {
+        # note SMOW always exists in every run
+        cur.std.mat <- cur.std
+        cur.std.mat.avg <-
+          data.frame(
+            cur.accepted$d18O.per.mil.accepted,
+            cur.accepted$D17O.per.meg.accepted,
+            avg,
+            avg.resid,
+            n,
+            SD
+          )
+        cur.std.mat.avg.rownames = standards[rr]
+      } else if (rr > 1 &
+                 nrow(cur.std) == 0) {
+        # the standard was not analyzed during this reactor
+        # fill with NAs
+        a = 2
+        na.replacer <-
+          data.frame(matrix(NA, nrow = 1, ncol = ncol(cur.std.mat)))
+        names(na.replacer) <- names(cur.std.mat)
+        cur.std.mat <- rbind(cur.std.mat, na.replacer)
+        na.replacer2 <-
+          data.frame(matrix(
+            NA,
+            nrow = 1,
+            ncol = ncol(cur.std.mat.avg)
+          ))
+        names(na.replacer2) <- names(cur.std.mat.avg)
+        cur.std.mat.avg <- rbind(cur.std.mat.avg, na.replacer2)
+        cur.std.mat.avg.rownames = rbind(cur.std.mat.avg.rownames, standards[rr])
+      } else if (rr > 1 &
+                 nrow(cur.std) > 0) {
+        # the standard was analyzed during this reactor
+        a = 3
+        cur.std.mat <- rbind(cur.std.mat, cur.std)
+        cur.std.mat.avg <-
+          rbind(
+            cur.std.mat.avg,
+            c(
+              cur.accepted$d18O.per.mil.accepted,
+              cur.accepted$D17O.per.meg.accepted,
+              avg,
+              avg.resid,
+              n,
+              SD
+            )
+          )
+        cur.std.mat.avg.rownames = rbind(cur.std.mat.avg.rownames, standards[rr])
+      }
+    }
+    if (nrow(cur.std.mat) > 0) {
+      # Update the plotting list if the standard was run in this reactor
+      plot.list.std[[r]] <- ggplot.maker.IPLD17O.std(cur.std.mat)
+    }
+    # Update the all-standards list each correction loop
+    all.std[[r]] <- cur.std.mat
+    # Update summary-standards list each correction loop
+    names(cur.std.mat.avg) <-
+      c("d18O.accept",
+        "D17O.accept",
+        "avg.D17O",
+        "avg.D17O.resid",
+        "n",
+        "SD")
+    row.names(cur.std.mat.avg) <- cur.std.mat.avg.rownames
+    summary.std[[r]] <- cur.std.mat.avg
+  }
+  multiplot(plotlist = plot.list.std, cols = 2)
+  
+  
+  
+  
+  
+  # # Output corrected data and summary of standards
+  # for (k in 1:length(summary.std)) {
+  #   curFile.data.cor = paste(path.out,
+  #                            "R",
+  #                            prefix,
+  #                            "_corData_",
+  #                            plot.col.byCorr.names[k],
+  #                            ".csv",
+  #                            sep = "")
+  #   curFile.data.cor.line.stats = paste(path.out,
+  #                                       "R",
+  #                                       prefix,
+  #                                       "_corDataLineStats_",
+  #                                       plot.col.byCorr.names[k],
+  #                                       ".csv",
+  #                                       sep = "")
+  #   curFile.summary.std = paste(path.out,
+  #                               "R",
+  #                               prefix,
+  #                               "_summaryStd_",
+  #                               plot.col.byCorr.names[k],
+  #                               ".csv",
+  #                               sep = "")
+  #   write.csv(data.cor[[k]],curFile.data.cor)
+  #   write.csv(data.cor.line.stats[[k]],curFile.data.cor.line.stats)
+  #   write.csv(summary.std[[k]], curFile.summary.std)
+  # }
+  
+  # Final data output
+  if (segment.IPL[1,1] == -9999) { # There are no segments
+    curFile.data.cor.final = paste(path.out,
+                                   "R",
+                                   prefix,
+                                   "_dataFinal.csv",
+                                   sep = "")
+    curFile.data.cor.final.line.stats = paste(path.out,
+                                              "R",
+                                              prefix,
+                                              "_dataFinal_lineStats.csv",
+                                              sep = "")
+    write.csv(D17O.final, curFile.data.cor.final)
+    write.csv(D17O.final.line.stats, curFile.data.cor.final.line.stats)
+    
+  } else {
+    for (k in 1:length(D17O.final)) {
+      curFile.data.cor.final = paste(path.out,
+                                     "R",
+                                     prefix,
+                                     "_dataFinal_seg",
+                                     k,
+                                     ".csv",
+                                     sep = "")
+      curFile.data.cor.final.line.stats = paste(path.out,
+                                                "R",
+                                                prefix,
+                                                "_dataFinal_seg",
+                                                k,
+                                                "lineStats",
+                                                ".csv",
+                                                sep = "")
+      write.csv(D17O.final[[k]], curFile.data.cor.final)
+      write.csv(D17O.final.line.stats[[k]], curFile.data.cor.final.line.stats)
+    }
+  }
+  
+  # 
+  # 
+  # curFile.summary.std = paste(path.out,
+  #                             "R",
+  #                             prefix,
+  #                             "_summaryStd",
+  #                             ".csv",
+  #                             sep = "")
+  # if (cat == 1){ # basic std summary
+  #   write.csv(summary.std[[1]], curFile.summary.std)
+  # } else { # linear std summary
+  #   write.csv(summary.std[[2]], curFile.summary.std)
+  # }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+}
+
+# END OF SMOW-SLAP CORRECTION
+
+
+
+#
+#
+# ######## Goals ############
+
+# # Allow user to pick which is the final correction
+# # Compare to other reactors
+# # Carbonate correction - what should be done for this?

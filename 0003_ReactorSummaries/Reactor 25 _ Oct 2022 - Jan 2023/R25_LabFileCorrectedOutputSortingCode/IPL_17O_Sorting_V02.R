@@ -1,0 +1,513 @@
+# IPL_17O_Sorting
+# Sorts the corrected data files into a list of samples and list of sample averages
+
+####NEED to specify user input in InputPostProcessing.csv before running this script
+#need to re-do that every time
+
+#packages
+library(ggplot2)
+library(gridExtra)
+library(gtable)
+
+# Clear the workspace and plots
+rm(list = ls())
+if (!is.null(dev.list()))
+  dev.off()
+
+# Do you want to sort the JHU or UM data?
+JHUorUM <- 2 # 1 for JHU, 2 for UM
+
+# Do you want to plot the data in R? (1=suppress the plots, program always outputs plots to pdf)
+# This significantly shortens run time.
+suppressPlot = 1
+
+######### data file locations setup ###########################################
+# Data reduction folder data path. This address should lead to "Data Reduction Procedure." No final "/" is needed.
+# If the auto-finding function doesn't work, here is an example way to statically specify the address
+# path.data.red <- "D:/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure"
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+path.data.red <- dirname(getwd())
+#path.data.red <-  "C:/Users/nmellis/Downloads/D17O_Data_Reduction_active"
+
+
+# importing path: corrected reactor data files
+path.in <-
+  paste(path.data.red,"/","0002_LabFileCorrectedOutput","/",sep="")
+
+# Output path: path for global and average analyses lists
+path.out <-
+  paste(path.data.red,"/",sep="")
+
+# Define path to the functions needed for this program
+path.to.functions <-
+  paste(path.data.red,"/","0001_ReductionCode/ReductionCodeFunctions","/",sep="")
+
+############################################################################################
+# Import files
+############################################################################################
+#import the post-processing input file, which contains information about which of the correction schemes is preferred for each reactor.
+setwd(path.in)
+# Which data file to import for the post-processing informations?
+if (JHUorUM == 1){ # sort the JHU data
+  data.post <- paste("postProcessInputJHU.csv", sep = "")
+}else{ # sort the UM data
+  data.post <- paste("postProcessInput.csv", sep = "")
+}
+post.inp <- read.csv(data.post, stringsAsFactors = FALSE, header = TRUE)
+
+############################################################################################
+# Make a list of all samples ever run (compile everything)
+############################################################################################
+# Import all reactor data corrected by the preferred scheme. Note that this requires user input in "postProcessInput.csv" to force users to look at the data and not blindly accept the auto-selected correction scheme.
+count <- 0
+file.verify <- data.frame(matrix(NA, nrow = 10000, ncol = 1)) # data.frame to verify the right files are pulled in
+names(file.verify) <- "files.pulled"
+for (k in 1:nrow(post.inp)){ # each row corresponds to a reactor
+  curFileNum <- post.inp$reactor.file.number[k] # set the file number by the spreadsheet
+  if (post.inp$prefer.user[k]!=-9999){ # no correction is possible for this reactor - no normalized data exists
+    if (post.inp$prefer.user[k]==1){ # basic correction preferred for this reactor
+      count <- count+1
+      data.file2 <- paste("R",curFileNum,"_corData_basic.csv", sep = "")
+      file.verify[[1]][count] <- data.file2
+      # Add data to the overall list
+      if (count==1){
+        data <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+      } else {
+        hold <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+        data <- rbind(data,hold)
+      }
+      
+    } else if (post.inp$prefer.user[k]==2){ # linear correction preferred for this reactor
+      count <- count+1
+      data.file2 <- paste("R",curFileNum,"_corData_linear.csv", sep = "")
+      file.verify[[1]][count] <- data.file2
+      # Add data to the overall list
+      if (count==1){
+        data <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+      } else {
+        hold <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+        data <- rbind(data,hold)
+      }
+      
+    } else if (post.inp$prefer.user[k]==3){ # segmented correction preferred for this reactor
+      # loop through the segments and get the preferred data for each segment
+      numSeg <- post.inp$numSeg[k]
+      for (kk in 1:numSeg){
+        count <- count+1
+        cur.prefer.user.seg <- post.inp[[paste("prefer.user.seg",kk,sep="")]][k]
+        if (cur.prefer.user.seg==1){ # basic correction preferred for this segment
+          data.file2 <- paste("R",k,"_corData_seg",kk,"basic.csv", sep = "")
+        } else if (cur.prefer.user.seg==2){ # linear correction preferred for this reactor
+          data.file2 <- paste("R",k,"_corData_seg",kk,"linear.csv", sep = "")
+        }
+        file.verify[[1]][count] <- data.file2
+        # Add data to the overall list
+        if (count==1){
+          data <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+        } else {
+          hold <- read.csv(data.file2,stringsAsFactors = FALSE, header = TRUE)
+          data <- rbind(data,hold)
+        }
+      }
+    }
+  }
+}
+file.verify <- subset(file.verify,!is.na(files.pulled))
+
+# Add a column to keep numbers in R's alphabetical order - for box plots
+for (k in 1:nrow(data)){
+  curData <- data[k,]
+  if (curData$reactor.ID<10){
+    data$reactor.ID.box[k] <- paste("0",curData$reactor.ID,sep="")
+  }else{
+    data$reactor.ID.box[k] <- paste("",curData$reactor.ID,sep="")
+  }
+}
+
+############################################################################################
+# Make a list of sample averages
+############################################################################################
+# Make a list of unique sample names and find the average information for samples. Desired output is Type.1, Type.2, sample.ID, isotopes
+name.list <- unique(data$sample.ID)
+names.data.avg = c("Type.1",
+                   "Type.2",
+                   "sample.ID",
+                   "n",
+                   "avg.dp17O",
+                   "avg.dp18O",
+                   "avg.D17O",
+                   "sd.dp17O",
+                   "sd.dp18O",
+                   "sd.D17O")
+data.avg <- data.frame(matrix(nrow = length(name.list), ncol = length(names.data.avg)))
+names(data.avg) = names.data.avg
+
+# Average globally
+for (k in 1:length(name.list)){
+  # Find relevant rows for the current sample.ID
+  curData <- subset(data,sample.ID==name.list[k])
+  # Only use rows with complete D17O correction (i.e., including tertiary normalization). Note that all waters are automatically accepted.
+  curData <- curData[!is.na(curData$D17O.SMOWSLAP.per.meg.carbNorm),]
+  
+  # number of replicates
+  n <- nrow(curData)
+  
+  # average values
+  avg.dp17O <- mean(curData$dp17O.SMOWSLAP.CO2norm)
+  avg.dp18O <- mean(curData$dp18O.SMOWSLAP.CO2norm)
+  avg.D17O <- mean(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+  
+  # standard deviation
+  sd.dp17O <- sd(curData$dp17O.SMOWSLAP.CO2norm)
+  sd.dp18O <- sd(curData$dp18O.SMOWSLAP.CO2norm)
+  sd.D17O <- sd(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+  
+  data.avg[k,] <-c(curData$Type.1[1], curData$Type.2[1], curData$sample.ID[1], n, avg.dp17O, avg.dp18O, avg.D17O, sd.dp17O, sd.dp18O, sd.D17O)
+}
+
+############################################################################################
+# Make a list of standards by reactor
+############################################################################################
+# Make a list of all the standard data
+data.std <-subset(data,Type.1=="WaterStd" | Type.1 == "CarbonateStd" | Type.1 == "PhosphateStd")
+# Make a list of unique standards names
+names.std <- sort(unique(data.std$Type.2))
+
+# Make a storage list for the standard data. This includes information for each reactor and all-time. Each data.frame has information for one of the following variables:
+# n - number of replicates
+# d'17O (per mil)
+# d'17O sd (per mil)
+# d'18O (per mil)
+# d'18O sd (per mil)
+# D17O (per meg)
+# D17O sd (per meg)
+
+# Names for list
+sum.std.listnames <- c("n", "dp17O", "dp17O.sd", "dp18O", "dp18O.sd", "D17O", "D17O.sd")
+# Empty list of appropriate size
+sum.std <- vector("list", length(sum.std.listnames))
+# Name the data.frames in the list
+names(sum.std) <- sum.std.listnames
+
+# Set up matrix for naming data.frame columns (rows are just standard names)
+sum.std.names.col <- matrix(NA, nrow = 1, ncol = nrow(post.inp))
+for (k in 1:(nrow(post.inp)+1)){ # name columns by reactor number, add one column for all-time values
+  curRnum <- post.inp$reactor.file.number[k] # set the file number by the spreadsheet
+  sum.std.names.col[k] <- paste("R",curRnum,sep="")
+  if (k == nrow(post.inp)+1){ # last column is all-time
+    sum.std.names.col[k] <- "all.time"
+  }
+}
+
+# Initialize empty, named data.frames in the list
+for (k in 1:length(sum.std)){
+  curRnum <- post.inp$reactor.file.number[k] # set the file number by the spreadsheet
+  sum.std[[sum.std.listnames[k]]] <- data.frame(matrix(NA, nrow = length(names.std), ncol = nrow(post.inp)+1))
+  colnames(sum.std[[sum.std.listnames[k]]]) <- sum.std.names.col
+  rownames(sum.std[[sum.std.listnames[k]]]) <- names.std
+}
+
+# Fill the lists with desired information
+firstloop <- 0
+for (k in 1:length(names.std)){ # go through each standard separately
+  for (kk in 1:length(sum.std.names.col)){ # go through each reactor separately
+    curRnum <- post.inp$reactor.file.number[kk] # set the file number by the spreadsheet
+    if (kk<length(sum.std.names.col)){ # individual reactor summaries
+      # Get all data from this reactor
+      curData <- subset(data.std,reactor.ID==curRnum & sample.ID==names.std[k])
+      # Only use rows with complete D17O correction (i.e., including tertiary normalization). Note that all waters are automatically accepted.
+      curData <- curData[!is.na(curData$D17O.SMOWSLAP.per.meg.carbNorm),]
+      # Get desired data and record in the list
+      sum.std[[sum.std.listnames[1]]][k,kk] <- nrow(curData) # n - number of replicates
+      sum.std[[sum.std.listnames[2]]][k,kk] <- mean(curData$dp17O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[3]]][k,kk] <- sd(curData$dp17O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[4]]][k,kk] <- mean(curData$dp18O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[5]]][k,kk] <- sd(curData$dp18O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[6]]][k,kk] <- mean(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+      sum.std[[sum.std.listnames[7]]][k,kk] <- sd(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+      
+      ## Keep track of the individual replicates to make box plots later
+      if (nrow(curData)>0){ # data must exist to add it
+        if (firstloop==0){ # set up data.frame on very first loop
+          allReps <- data.frame(curData$Type.2, curData$reactor.ID.box, curData$D17O.SMOWSLAP.per.meg.carbNorm)
+          allReps$indOrAll <- paste(curData$reactor.ID.box,"-individual", sep="")
+          firstloop <- 1
+        }else{
+          hold <- data.frame(curData$Type.2, curData$reactor.ID.box, curData$D17O.SMOWSLAP.per.meg.carbNorm)
+          hold$indOrAll <- paste(curData$reactor.ID.box,"-individual", sep="")
+          allReps <- rbind(allReps, hold)
+        }
+      }
+      
+    } else { # all-time summary
+      # Get all-time data
+      curData <- subset(data,sample.ID==names.std[k]) 
+      # all reactor.ID values are accepted
+      # Only use rows with complete D17O correction (i.e., including tertiary normalization). Note that all waters are automatically accepted.
+      curData <- curData[!is.na(curData$D17O.SMOWSLAP.per.meg.carbNorm),]
+      # Get desired data and record in the list
+      sum.std[[sum.std.listnames[1]]][k,kk] <- nrow(curData) # n - number of replicates
+      sum.std[[sum.std.listnames[2]]][k,kk] <- mean(curData$dp17O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[3]]][k,kk] <- sd(curData$dp17O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[4]]][k,kk] <- mean(curData$dp18O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[5]]][k,kk] <- sd(curData$dp18O.SMOWSLAP.CO2norm)
+      sum.std[[sum.std.listnames[6]]][k,kk] <- mean(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+      sum.std[[sum.std.listnames[7]]][k,kk] <- sd(curData$D17O.SMOWSLAP.per.meg.carbNorm)
+      
+      ## Keep track of the replicates for all-time to make box plots later
+      if (nrow(curData)>0){ # data must exist to add it
+        hold <- data.frame(curData$Type.2, curData$reactor.ID.box, curData$D17O.SMOWSLAP.per.meg.carbNorm)
+        hold$indOrAll <- "AVG"
+        hold$curData.reactor.ID.box <- "AVG"
+        allReps <- rbind(allReps, hold)
+      }
+    }
+  }
+}
+
+# Rename columns
+colnames(allReps) <- c("name","reactor","avgDp17O","type")
+
+############################################################################################
+# Plot the standard data summary
+############################################################################################
+# Set overall theme
+themeA <- theme(
+  plot.background = element_rect(fill = "white"), 
+  panel.background = element_rect(fill = "white", colour="black",size=2),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.text=element_text(size=10),
+  axis.title=element_text(size=10),
+  axis.ticks.length = unit(0.5,"lines"),
+  axis.ticks = element_line(size=1),
+  plot.margin = margin(5,5,5,5),
+  legend.position = "none"
+)
+
+nrow_set <- 5 + 1 # adjust number of rows (#rows + 1)
+
+# for (k in 1:length(sum.std)){ # each summary variable gets its own plot
+for (k in c(6)){ # for D'17O alone
+  plot.list.std = list() # empty plot list each loop
+  x.count <- 1 # counter to decide when to plot x label
+  y.count <- 1 # counter to decide when to plot y label
+  for (kk in 1:length(names.std)){ # each standard gets its own subplot
+    # Make a list of relevant data, coordinated by reactor.
+    # 1 - reactor number
+    # 2 - data
+    # 3 - data type (unused)
+    x <- 1:(nrow(post.inp)+1) # reactor numbers + 1 extra for all-time value
+    y <- as.numeric(sum.std[[sum.std.listnames[k]]][kk,]) # current data
+    z <- "01_reactor" # arbitrary value for individual reactors
+    dataset <- data.frame(x,y,z)
+    dataset$z[length(dataset$z)] <- "02_average" # arbitrary value to make the all-time value distinct
+    colnames(dataset) <- c("reactor","avgDp17O","type")
+    if (x.count == (nrow_set-1)){ # bottom row gets x-axis label
+      x.label <- "reactor"
+    } else {
+      x.label <- ""
+    }
+    x.count <- x.count+1
+    if (x.count>(nrow_set-1)){
+      x.count <- 1
+    }
+    
+    if (y.count <= (nrow_set-1)){
+      y.label <- expression(paste(Delta ^"'17", "O (per meg)",sep=""))
+    } else {
+      y.label <- ""
+    }
+    y.count <- y.count+1
+    
+    title.label <- names.std[kk]
+    # ensure there is minimum variability in the y-limit to avoid unnecessary digits in y-axis
+    ymin <- min(dataset$avgDp17O,na.rm = TRUE)
+    ymax <- max(dataset$avgDp17O,na.rm = TRUE)
+    yavg <- floor(mean(dataset$avgDp17O,na.rm = TRUE))
+    if ((ymax-ymin)<8){
+      ylimSet <- c(yavg-5,yavg+5)
+    }else{
+      ylimSet <- c(ymin, ymax)
+    }
+    
+    plot.list.std[[kk]] <- ggplot(dataset, aes(x=reactor, y=avgDp17O, group=1))+
+      geom_point(aes(group=type,color=type),size=3) +
+      scale_color_manual(values = c("black","blue"))+
+      themeA+
+      xlab(x.label)+
+      ylab(y.label)+
+      ggtitle(title.label)+
+      theme(legend.position = "none")+
+      ylim(ylimSet)
+  }
+  # Force a common legend to plot (this is setup, execution is next section)
+  r.end <- length(plot.list.std)+1
+  # Make unused data
+  xUnused <- data.frame(matrix(0, nrow = 2, ncol = 1))
+  yUnused <- data.frame(matrix(0, nrow = 2, ncol = 1))
+  gUnused <- c("all-time average","reactor average") # note these must be in alphabetical order
+  dataUnused <- cbind(xUnused,yUnused,gUnused)
+  colnames(dataUnused) <- c("c1","c2","c3")
+  plot.list.std[[r.end]] <- ggplot(dataUnused, aes(x=c1, y=c2, group=c3))+
+    geom_point(aes(group=c3,color=c3),size=3) +
+    scale_color_manual(values = c("blue","black"))+
+    themeA+
+    theme(legend.position = c(0.5, 0.5), legend.title = element_blank())+
+    xlab("")+
+    ylab("")+
+    theme(axis.line=element_blank(),
+          axis.text.x=element_blank(),
+          axis.text.y=element_blank(),
+          axis.ticks=element_blank(),
+          axis.title.x=element_blank(),
+          axis.title.y=element_blank(),
+          panel.background=element_blank(),
+          panel.border=element_blank(),
+          panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank(),
+          plot.background=element_blank())
+  
+  # Pad to end of column 
+  yy <- length(plot.list.std)
+  while (x.count<(nrow_set)){ # padding is needed if condition is not met
+    yy <- yy+1
+    plot.list.std[[yy]] <- ggplot() + theme_void()
+    x.count <- x.count+1
+  }
+  
+  # set up grid and grob calls for plotting everything with consistent plot size
+  rCount <- 1
+  cCount <- 1
+  for(k in 1:length(plot.list.std)){
+    if (rCount==1){
+      gA <- ggplotGrob(plot.list.std[[k]])
+    }else{
+      gA <- rbind(gA, ggplotGrob(plot.list.std[[k]]))
+    }
+    rCount <- rCount+1
+    
+    # add by column if rCount reaches max
+    if (rCount==nrow_set){
+      rCount=1
+      
+      if (cCount==1){
+        gB <- gA
+      }else{
+        gB <- cbind(gB,gA)
+      }
+      cCount <- cCount+1
+    }
+  }
+  if (suppressPlot == 0){
+  # grid::grid.newpage()
+  grid::grid.draw(gB)
+  }
+}
+
+
+##################################################  Plot data as box plots
+# for (k in 1:length(sum.std)){ # each summary variable gets its own plot
+for (k in c(6)){ # for D'17O alone
+  plot.list.std.box = list() # empty plot list each loop
+  x.count <- 1 # counter to decide when to plot x label
+  y.count <- 1 # counter to decide when to plot y label
+  for (kk in 1:length(names.std)){ # each standard gets its own subplot
+    # Make a list of relevant data, coordinated by reactor.
+    dataset <- subset(allReps,allReps$name==names.std[kk])
+    
+    if (x.count == (nrow_set-1)){ # bottom row gets x-axis label
+      x.label <- "reactor"
+    } else {
+      x.label <- ""
+    }
+    x.count <- x.count+1
+    if (x.count>(nrow_set-1)){
+      x.count <- 1
+    }
+    
+    if (y.count <= (nrow_set-1)){
+      y.label <- expression(paste(Delta ^"'17", "O (per meg)",sep=""))
+    } else {
+      y.label <- ""
+    }
+    y.count <- y.count+1
+    
+    title.label <- names.std[kk]
+    # ensure there is minimum variability in the y-limit to avoid unnecessary digits in y-axis
+    ymin <- min(dataset$avgDp17O,na.rm = TRUE)
+    ymax <- max(dataset$avgDp17O,na.rm = TRUE)
+    yavg <- floor(mean(dataset$avgDp17O,na.rm = TRUE))
+    if ((ymax-ymin)<8){
+      ylimSet <- c(yavg-5,yavg+5)
+    }else{
+      ylimSet <- c(ymin, ymax)
+    }
+    
+    plot.list.std.box[[kk]] <- ggplot(dataset, aes(x=reactor, y=avgDp17O, fill=reactor))+
+      geom_boxplot()+
+      geom_jitter(color="black", size=0.4, alpha=0.9) +
+      themeA+
+      xlab(x.label)+
+      ylab(y.label)+
+      ggtitle(title.label)+
+      theme(legend.position = "none")+
+      ylim(ylimSet)+
+      theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust=1))
+  }
+  
+  # Pad to end of column
+  yy <- length(plot.list.std.box)
+  while (x.count<(nrow_set)){ # padding is needed if condition is not met
+    yy <- yy+1
+    plot.list.std.box[[yy]] <- ggplot() + theme_void()
+    x.count <- x.count+1
+  }
+  
+  # set up grid and grob calls for plotting everything with consistent plot size
+  rCount <- 1
+  cCount <- 1
+  for(k in 1:length(plot.list.std.box)){
+    if (rCount==1){
+      gA <- ggplotGrob(plot.list.std.box[[k]])
+    }else{
+      gA <- rbind(gA, ggplotGrob(plot.list.std.box[[k]]))
+    }
+    rCount <- rCount+1
+    
+    # add by column if rCount reaches max
+    if (rCount==nrow_set){
+      rCount=1
+      
+      if (cCount==1){
+        gB <- gA
+      }else{
+        gB <- cbind(gB,gA)
+      }
+      cCount <- cCount+1
+    }
+  }
+  if (suppressPlot == 0){
+  grid::grid.newpage()
+  grid::grid.draw(gB)
+  }
+}
+
+############################################################################################
+# Output files
+############################################################################################
+# Output the final data and average data lists
+if (JHUorUM == 1){ # output as JHU data
+  write.csv(data, "cor.data.allJHU.csv", row.names = FALSE)
+  write.csv(data.avg, "cor.data.all.avgJHU.csv", row.names = FALSE)
+}else{ # output as UM data
+  write.csv(data, "cor.data.all.csv", row.names = FALSE)
+  write.csv(data.avg, "cor.data.all.avg.csv", row.names = FALSE)
+}
+
+# Save figure to file
+pdf(file = paste(path.out, "0002_LabFileCorrectedOutput", "/", "basic_figures", "/",  "stdSummary_box.pdf",sep=""),   # The directory you want to save the file in
+    width = 26, # The width of the plot in inches
+    height = 18) # The height of the plot in inches
+grid::grid.draw(gB)
+dev.off()
