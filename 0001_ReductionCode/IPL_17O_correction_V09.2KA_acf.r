@@ -126,9 +126,10 @@ R28 = "Cap17O Compiled REACTOR TWENTY EIGHT.xlsx"
 R29 = "Cap17O Compiled REACTOR TWENTY NINE.xlsx"
 R30 = "Cap17O Compiled REACTOR THIRTY.xlsx"
 R31 = "Cap17O Compiled REACTOR THIRTY ONE.xlsx"
+R32 = "Cap17O Compiled REACTOR THIRTY TWO.xlsx"
 
 # Also add variable name here for newly finished reactors
-reactor.file.names0 <- c(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R22, R23, R24, R25, R26, R27, R28, R29, R30, R31)
+reactor.file.names0 <- c(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, R32)
 
 # Update reactor names with each new reactor
 reactor.file.names <-
@@ -162,7 +163,8 @@ reactor.file.names <-
     "28", 
     "29",
     "30", 
-    "31")
+    "31",
+    "32")
 
 reactor.file.names.JHU <-
   c("510-607",
@@ -199,7 +201,7 @@ reactor.file.names.JHU <-
 # If the auto-finding function doesn't work, here is an example way to statically specify the address
 # path.data.red <- "D:/Documents/000_Michigan/Laboratory Data Files/Data Reduction Procedure"
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) ## FIX THIS TO RUN FILE
-path.data.red <- "/Users/annefetrow/Downloads/Reactor Reductions/UM 17O WostbrockPinned" #dirname(getwd())
+path.data.red <- "/Users/allen/Documents/GitHub/17O_reduction/UM 17O WostbrockPinned_MLA_June2025/UM-17O-WostbrockPinned_MLA_June2025" #dirname(getwd())
 
 # Option for tertiary correction
 # 1 - use 'best' available standard set (see section below)
@@ -217,7 +219,7 @@ tert.cor.option <- 4
 JHUorUM <- 2 # 1 for JHU, 2 for UM
 
 formatCount = 0
-for (reactor.file.number in 31:31) { # This is the way to only reduce one reactor at a time.
+for (reactor.file.number in 32:32) { # This is the way to only reduce one reactor at a time.
   #for (reactor.file.number in 1:length(reactor.file.names)) { # can be used for either UM or JHU files (this will reduce all reactors)
   # for(reactor.file.number in 1:length(reactor.file.names)) { # for UM files
   # for(reactor.file.number in 1:length(reactor.file.names.JHU)) { # for JHU files

@@ -45,17 +45,60 @@ path.data.red <- dirname(getwd())
 # R20 = "Copy of Cap17O Compiled REACTOR TWENTY.xlsx"
 # R21 = "Cap17O Compiled REACTOR TWENTY ONE 22Mar02 sk.xlsx"
 # R22 = "Cap17O Compiled REACTOR TWENTY TWO.xlsx"
-# 
+# R23 = "Cap17O Compiled REACTOR TWENTY THREE.xlsx"
+# R24 = "Cap17O Compiled REACTOR THIRTY THREE.xlsx"
+# R25 = "Cap17O Compiled REACTOR THIRTY THREE.xlsx"
+# R26 = "Cap17O Compiled REACTOR THIRTY THREE.xlsx"
+# R27 = "Cap17O Compiled REACTOR THIRTY THREE.xlsx"
+# R28 = "Cap17O Compiled REACTOR TWENTY EIGHT.xlsx"
+# R29 = "Cap17O Compiled REACTOR TWENTY NINE.xlsx"
+# R30 = "Cap17O Compiled REACTOR THIRTY.xlsx"
+# R31 = "Cap17O Compiled REACTOR THIRTY ONE.xlsx"
+R32 = "Cap17O Compiled REACTOR THIRTY TWO.xlsx"
+# R33 = "Cap17O Compiled REACTOR THIRTY THREE.xlsx"
+
+
 # # Also add variable name here for newly finished reactors
-# reactor.file.names <-
-#   c(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20)
+reactor.file.names <- c(R1, 
+                        R2, 
+                        R3, 
+                        R4, 
+                        R5, 
+                        R6, 
+                        R7, 
+                        R8, 
+                        R9, 
+                        R10,
+                        R11, 
+                        R12, 
+                        R13, 
+                        R14, 
+                        R15, 
+                        R16, 
+                        R17, 
+                        R18, 
+                        R19, 
+                        R20,
+                        R21,
+                        R22,
+                        R23,
+                        R24,
+                        R25,
+                        R26,
+                        R27,
+                        R28,
+                        R29,
+                        R30,
+                        R31,
+                        R32,
+                        R33)
 
 ##############################################################################################
 ##############################################################################################
 ##############################################################################################
 ##############################################################################################
 # Go through all reactor.file.names one by one and run full code for each
- for (k in 23) { # use this line to pick one reactor
+ for (k in 32:33) { # use this line to pick one reactor
 # for (k in 1:length(reactor.file.names)) { # use this line to run format all reactors
     # clear all previous variables EXCEPT the reactor file names
   rm(list = ls()[!ls() %in% c("reactor.file.names", "k", "path.data.red")])

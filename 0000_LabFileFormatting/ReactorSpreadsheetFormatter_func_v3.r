@@ -48,8 +48,13 @@ path.data.red <- dirname(getwd())
 # R23 = "Cap17O Compiled REACTOR TWENTY THREE.xlsx"
 # R24 = "Cap17O Compiled REACTOR TWENTY FOUR_Ver.3.xlsx"
 # R25 = "Cap17O Compiled REACTOR TWENTY FIVE.xlsx"
-R32 = "Cap17O Compiled REACTOR THIRTY TWO.xlsx"
-# 
+# R26 = "Cap17O Compiled REACTOR TWENTY SIX.xlsx"
+# R27 = "Cap17O Compiled REACTOR TWENTY SEVEN.xlsx"
+# R28 = "Cap17O Compiled REACTOR TWENTY EIGHT.xlsx"
+# R29 = "Cap17O Compiled REACTOR TWENTY NINE.xlsx"
+# R30 = "Cap17O Compiled REACTOR THIRTY.xlsx"
+# R31 = "Cap17O Compiled REACTOR THIRTY ONE.xlsx"
+
 # # Also add variable name here for newly finished reactors
 # reactor.file.names <- c(R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R22, R23, R24, R25)
 
@@ -339,7 +344,8 @@ R32 = "Cap17O Compiled REACTOR THIRTY TWO.xlsx"
       for (kk in 2:nrow(curSamp)) {
         test.sequential <-
           as.numeric(curSamp$IPL.num[kk]) - as.numeric(curSamp$IPL.num[kk - 1])
-        if (abs(test.sequential) <= 2) { # '2' allows for one non-sequential IPL#
+        # if (abs(test.sequential) <= 2) { # '2' allows for one non-sequential IPL# replaced with the next line to fix errors # 04172025
+          if (!is.na(test.sequential) && abs(test.sequential) <= 2) {
           # if the sample is sequential (note some early IPL# are negative, requires absolute value of test)
           curSamp$group.num[kk] <- curGroup
         } else {
@@ -380,7 +386,8 @@ R32 = "Cap17O Compiled REACTOR THIRTY TWO.xlsx"
       for (kk in 2:nrow(curSamp)) {
         test.sequential <-
           as.numeric(curSamp$IPL.num[kk]) - as.numeric(curSamp$IPL.num[kk - 1])
-        if (abs(test.sequential) <= 2) {
+        # if (abs(test.sequential) <= 2) { # '2' allows for one non-sequential IPL# replaced with the next line to fix errors # 04172025
+        if (!is.na(test.sequential) && abs(test.sequential) <= 2) {
           # if the sample is sequential (note some early IPL# are negative, requires absolute value of test)
           curSamp$group.num[kk] <- curGroup
         } else {
